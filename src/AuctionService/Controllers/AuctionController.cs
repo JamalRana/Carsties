@@ -3,6 +3,8 @@ using AuctionService.DTOs;
 using AuctionService.Entities;
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
+using Contracts;
+using MassTransit;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -15,10 +17,12 @@ public class AuctionController : ControllerBase
 {
     private readonly AuctionDbContext _context;
     private readonly IMapper _mapper;
+    private readonly IPublishEndpoint _publishEndpoint;
 
-    public AuctionController(AuctionDbContext context, IMapper mapper)
+    public AuctionController(AuctionDbContext context, IMapper mapper, IPublishEndpoint publishEndpoint)
     {
         this._mapper = mapper;
+        this._publishEndpoint = publishEndpoint;
         this._context = context;
 
     }
@@ -64,14 +68,18 @@ public class AuctionController : ControllerBase
         // TODO: Add Current user as seller
         auction.Seller = "bob";
         _context.Auctions.Add(auction);
+        var newAuction = _mapper.Map<AuctionDto>(auction);
+
+        await _publishEndpoint.Publish(_mapper.Map<AuctionCreated>(newAuction));
         var result = await _context.SaveChangesAsync() > 0;
+
         if (!result)
         {
             return BadRequest("Failed to create auction");
         }
 
 
-        return CreatedAtAction(nameof(GetAuction), new { auction.Id }, _mapper.Map<AuctionDto>(auction)); // CreatedAtAction(nameof(GetAuction), new { id = auction.Id }, auction);
+        return CreatedAtAction(nameof(GetAuction), new { auction.Id }, newAuction); // CreatedAtAction(nameof(GetAuction), new { id = auction.Id }, auction);
     }
 
     // PUT: api/Auction/{id}
@@ -96,6 +104,7 @@ public class AuctionController : ControllerBase
         auction.Item.Mileage = updateAuctionDto.Mileage ?? auction.Item.Mileage;
         auction.UpdatedAt = DateTime.UtcNow;
 
+        await _publishEndpoint.Publish(_mapper.Map<AuctionUpdated>(auction));
 
         var result = await _context.SaveChangesAsync() > 0;
         if (result)
@@ -115,6 +124,7 @@ public class AuctionController : ControllerBase
 
         _context.Auctions.Remove(await auction);
 
+        await _publishEndpoint.Publish<AuctionDeleted>(new { Id = auction.Result.Id });
 
         var result = await _context.SaveChangesAsync() > 0;
         if (result)
